@@ -80,30 +80,31 @@ class AccountInvoiceRefund(models.Model):
         res = super(AccountInvoiceRefund, self).action_invoice_open()
         for invoice in self:
             if invoice.type == 'out_refund' and invoice.invoice_id:
-                # Obtener la factura original usando el campo invoice_id
+                # Obtener la factura original desde invoice_id
                 original_invoice = invoice.invoice_id
-                
+
                 # Verificar si la factura original tiene un picking relacionado
                 if original_invoice and original_invoice.validated_picking_id:
                     picking = original_invoice.validated_picking_id
 
-                    if picking.exists():
-                        # Llamar al método para crear la devolución en el picking encontrado
-                        self._create_return_picking(picking, invoice)
-                    else:
-                        raise UserError(_("El picking relacionado con la factura original no existe o ha sido eliminado."))
-                else:
-                    raise UserError(_("No se encontró un picking relacionado con la factura original."))
-        return res
+                    _logger.info(f"Picking relacionado encontrado: {picking.id} | Estado del picking: {picking.state}")
 
-    def _create_return_picking(self, picking, invoice):
-        # Crear el wizard de devolución
-        return_wizard = self.env['stock.return.picking'].create({'picking_id': picking.id})
-        # Configurar las líneas de devolución para que sean reembolsadas
-        return_wizard.product_return_moves.write({'to_refund': True})
-        # Crear la devolución
-        return_picking, _ = return_wizard.create_returns()
-        # Marcar la devolución como completada
-        return_picking.action_done()
-        # Registrar un mensaje en el chatter de la factura de la nota de crédito
-        invoice.message_post(body=_("El picking de devolución %s ha sido creado y procesado según la nota de crédito.") % return_picking.name)
+                    if picking and picking.state == 'done':
+                        # Llamar al wizard de devolución del picking
+                        return_wizard = self.env['stock.return.picking'].create({'picking_id': picking.id})
+
+                        # Devolver el control al usuario para que realice la devolución manualmente
+                        return {
+                            'name': _('Devolución del Picking'),
+                            'type': 'ir.actions.act_window',
+                            'res_model': 'stock.return.picking',
+                            'view_mode': 'form',
+                            'view_type': 'form',
+                            'res_id': return_wizard.id,
+                            'target': 'new',
+                        }
+                    else:
+                        raise UserError(_("No se encontró un picking en estado 'done' relacionado con la factura original."))
+                else:
+                    raise UserError(_("La factura original no tiene un picking asociado."))
+        return res
